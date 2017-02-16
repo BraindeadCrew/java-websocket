@@ -1,6 +1,7 @@
 package fr.braindead.websocket.server;
 
 import fr.braindead.websocket.TestConfig;
+import org.junit.Assert;
 import org.junit.Test;
 import org.mockito.Mockito;
 
@@ -18,6 +19,7 @@ public class ServerTest extends TestConfig {
         this.client.connectBlocking();
 
         Mockito.verify(this.client, Mockito.timeout(250).times(1)).onOpen();
-        //Mockito.verify(this.server, Mockito.timeout(250).times(1)).onOpen(Mockito.any(WebSocket.class));
+        Assert.assertEquals(1, this.server.getClients().size());
     }
+
 }

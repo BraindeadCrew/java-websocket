@@ -4,15 +4,15 @@ import fr.braindead.websocket.SendCallback;
 import io.undertow.server.DefaultByteBufferPool;
 import io.undertow.websockets.client.WebSocketClient.ConnectionBuilder;
 import io.undertow.websockets.core.*;
-import org.xnio.IoFuture;
-import org.xnio.OptionMap;
-import org.xnio.Xnio;
-import org.xnio.XnioWorker;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.xnio.*;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -21,11 +21,15 @@ import java.util.concurrent.TimeUnit;
  */
 public abstract class WebSocketClientImpl implements WebSocketClient {
 
+    private static final Logger logger = LogManager.getLogger(WebSocketClientImpl.class);
+
     public static final long DEFAULT_TIMEOUT = 10;
 
+    private XnioWorker worker;
+
     protected URI uri;
-    protected CountDownLatch connectLatch;
     protected WebSocketChannel channel;
+    protected ExecutorService handlerService;
 
     /**
      * Creates a WebSocket client using the given WebSocketChannel for communications
@@ -33,6 +37,7 @@ public abstract class WebSocketClientImpl implements WebSocketClient {
      */
     public WebSocketClientImpl(WebSocketChannel channel) {
         this.channel = channel;
+        this.handlerService = Executors.newCachedThreadPool();
     }
 
     /**
@@ -41,6 +46,7 @@ public abstract class WebSocketClientImpl implements WebSocketClient {
      */
     public WebSocketClientImpl(URI uri) {
         this.uri = uri;
+        this.handlerService = Executors.newCachedThreadPool();
     }
 
     /**
@@ -95,31 +101,35 @@ public abstract class WebSocketClientImpl implements WebSocketClient {
     }
 
     protected ConnectionBuilder connectionBuilder() throws IOException {
-        XnioWorker worker = Xnio.getInstance().createWorker(OptionMap.EMPTY);
-        return new ConnectionBuilder(worker, new DefaultByteBufferPool(true, 1024), uri);
+        this.worker = Xnio.getInstance().createWorker(OptionMap.EMPTY);
+        return new ConnectionBuilder(this.worker, new DefaultByteBufferPool(true, 1024), uri);
     }
 
     protected void registerChannelReceivers() {
         this.channel.getReceiveSetter().set(new AbstractReceiveListener() {
             @Override
-            protected void onFullTextMessage(WebSocketChannel channel, BufferedTextMessage msgBuffer) throws IOException {
-                super.onFullTextMessage(channel, msgBuffer);
-                WebSocketClientImpl.this.onMessage(msgBuffer.getData());
+            protected void onFullTextMessage(WebSocketChannel wsChannel, BufferedTextMessage msgBuffer) throws IOException {
+                super.onFullTextMessage(wsChannel, msgBuffer);
+                handlerService.submit(() -> WebSocketClientImpl.this.onMessage(msgBuffer.getData()));
             }
 
             @Override
             protected void onError(WebSocketChannel wsChannel, Throwable error) {
                 super.onError(wsChannel, error);
-                WebSocketClientImpl.this.onError(error);
+                handlerService.submit(() -> WebSocketClientImpl.this.onError(error));
             }
         });
 
-        this.channel.addCloseTask(wsChannel -> this.onClose(
-                wsChannel.getCloseCode(), wsChannel.getCloseReason(), wsChannel.isCloseInitiatedByRemotePeer()));
+        this.channel.addCloseTask(wsChannel -> {
+            handlerService.submit(() ->
+                    WebSocketClientImpl.this.onClose(wsChannel.getCloseCode(), wsChannel.getCloseReason(),
+                            wsChannel.isCloseInitiatedByRemotePeer()));
+            internalClose();
+        });
 
         this.channel.resumeReceives();
 
-        this.onOpen();
+        this.handlerService.submit(this::onOpen);
     }
 
     /**
@@ -153,6 +163,18 @@ public abstract class WebSocketClientImpl implements WebSocketClient {
             this.channel.setCloseCode(code);
             this.channel.setCloseReason(reason);
             this.channel.close();
+        }
+    }
+
+    protected void internalClose() {
+        try {
+            this.handlerService.shutdown();
+            this.handlerService.awaitTermination(5000, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            logger.debug("Handler service has been interrupted while waiting for shutdown. Forcing shutdown...");
+            this.handlerService.shutdownNow();
+        } finally {
+            this.worker.shutdownNow();
         }
     }
 
