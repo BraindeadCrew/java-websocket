@@ -1,6 +1,7 @@
 package fr.braindead.websocket.client;
 
-import fr.braindead.websocket.SendCallback;
+import fr.braindead.websocket.Callback;
+import fr.braindead.websocket.XNIOException;
 
 import java.io.IOException;
 import java.net.URI;
@@ -35,7 +36,7 @@ public abstract class IdleWebSocketClient extends WebSocketClientImpl {
     }
 
     @Override
-    public void connect() throws IOException {
+    public void connect() throws XNIOException {
         resetTimeout();
         super.connect();
     }
@@ -53,21 +54,23 @@ public abstract class IdleWebSocketClient extends WebSocketClientImpl {
     }
 
     @Override
-    public void send(String text, SendCallback callback) {
+    public void send(String text, Callback callback) {
         resetTimeout();
         super.send(text, callback);
     }
 
     @Override
-    public void close(int code, String reason) throws IOException {
+    public void close(int code, String reason, Callback callback) throws IOException {
         cleanExecutorService();
-        super.close(code, reason);
+        super.close(code, reason, callback);
     }
 
     @Override
     protected void registerChannelReceivers() {
+        // once connected: start idle timeout
         this.executorService = Executors.newSingleThreadScheduledExecutor();
         this.executorService.schedule(this::shutdown, idleTimeout, TimeUnit.MILLISECONDS);
+        // do parent behavior also
         super.registerChannelReceivers();
     }
 

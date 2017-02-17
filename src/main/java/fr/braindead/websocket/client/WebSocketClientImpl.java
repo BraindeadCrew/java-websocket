@@ -1,12 +1,16 @@
 package fr.braindead.websocket.client;
 
-import fr.braindead.websocket.SendCallback;
+import fr.braindead.websocket.Callback;
+import fr.braindead.websocket.XNIOException;
 import io.undertow.server.DefaultByteBufferPool;
 import io.undertow.websockets.client.WebSocketClient.ConnectionBuilder;
 import io.undertow.websockets.core.*;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-import org.xnio.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.xnio.IoFuture;
+import org.xnio.OptionMap;
+import org.xnio.Xnio;
+import org.xnio.XnioWorker;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -21,7 +25,7 @@ import java.util.concurrent.TimeUnit;
  */
 public abstract class WebSocketClientImpl implements WebSocketClient {
 
-    private static final Logger logger = LogManager.getLogger(WebSocketClientImpl.class);
+    private static final Logger logger = LoggerFactory.getLogger(WebSocketClientImpl.class);
 
     public static final long DEFAULT_TIMEOUT = 10;
 
@@ -51,16 +55,25 @@ public abstract class WebSocketClientImpl implements WebSocketClient {
 
     /**
      * Non-blocking connection attempt to the given URI endpoint
-     * @throws IOException if something goes wrong
+     * @throws XNIOException if unable to create XNIO worker
      */
     @Override
-    public void connect() throws IOException {
-        connectionBuilder().connect().addNotifier((ioFuture, client) -> {
+    public void connect() throws XNIOException {
+        logger.debug("Trying to connect to {}", this.uri);
+        IoFuture<WebSocketChannel> chanFuture = connectionBuilder().connect();
+        chanFuture.addNotifier((ioFuture, client) -> {
             if (ioFuture.getStatus() == IoFuture.Status.DONE) {
                 try {
                     this.channel = ioFuture.get();
+                    logger.debug("channel ok");
                     registerChannelReceivers();
-                } catch (IOException ignore) { /* should never happen because Status.DONE */ }
+                } catch (IOException e) {
+                    logger.debug("channel NOK");
+                    e.printStackTrace();
+                }
+            } else {
+                logger.debug("status not cool {}", ioFuture.getStatus());
+                handlerService.submit(() -> onError(ioFuture.getException()));
             }
         }, this);
     }
@@ -85,8 +98,10 @@ public abstract class WebSocketClientImpl implements WebSocketClient {
      */
     @Override
     public boolean connectBlocking(long timeout) throws IOException {
+        logger.debug("Connect blocking... ({})", this);
         IoFuture<WebSocketChannel> futureChan = connectionBuilder().connect();
         IoFuture.Status status = futureChan.await(timeout, TimeUnit.SECONDS);
+        logger.debug("Connect blocking status: {}", status);
         switch (status) {
             case DONE:
                 // ok
@@ -100,9 +115,13 @@ public abstract class WebSocketClientImpl implements WebSocketClient {
         }
     }
 
-    protected ConnectionBuilder connectionBuilder() throws IOException {
-        this.worker = Xnio.getInstance().createWorker(OptionMap.EMPTY);
-        return new ConnectionBuilder(this.worker, new DefaultByteBufferPool(true, 1024), uri);
+    protected ConnectionBuilder connectionBuilder() throws XNIOException {
+        try {
+            this.worker = Xnio.getInstance().createWorker(OptionMap.EMPTY);
+            return new ConnectionBuilder(this.worker, new DefaultByteBufferPool(true, 1024), uri);
+        } catch (IOException e) {
+            throw new XNIOException(e);
+        }
     }
 
     protected void registerChannelReceivers() {
@@ -110,7 +129,7 @@ public abstract class WebSocketClientImpl implements WebSocketClient {
             @Override
             protected void onFullTextMessage(WebSocketChannel wsChannel, BufferedTextMessage msgBuffer) throws IOException {
                 super.onFullTextMessage(wsChannel, msgBuffer);
-                handlerService.submit(() -> WebSocketClientImpl.this.onMessage(msgBuffer.getData()));
+                handlerService.submit(() -> onMessage(msgBuffer.getData()));
             }
 
             @Override
@@ -121,8 +140,7 @@ public abstract class WebSocketClientImpl implements WebSocketClient {
         });
 
         this.channel.addCloseTask(wsChannel -> {
-            handlerService.submit(() ->
-                    WebSocketClientImpl.this.onClose(wsChannel.getCloseCode(), wsChannel.getCloseReason(),
+            handlerService.submit(() -> onClose(wsChannel.getCloseCode(), wsChannel.getCloseReason(),
                             wsChannel.isCloseInitiatedByRemotePeer()));
             internalClose();
         });
@@ -153,16 +171,41 @@ public abstract class WebSocketClientImpl implements WebSocketClient {
 
     /**
      * Closes the connection
-     * @param code close code
-     * @param reason close reason
-     * @throws IOException if something goes wrong
+     * @param code
+     * @param reason
+     * @throws IOException
      */
     @Override
     public void close(int code, String reason) throws IOException {
+        this.close(code, reason, null);
+    }
+
+    /**
+     * Closes the connection
+     * @param code close code
+     * @param reason close reason
+     * @param callback optional callback #complete(error: Throwable) will be called
+     *                 when done (if success then error is null)
+     * @throws IOException if something goes wrong
+     */
+    @Override
+    public void close(int code, String reason, Callback callback) throws IOException {
         if (this.channel != null) {
-            this.channel.setCloseCode(code);
-            this.channel.setCloseReason(reason);
-            this.channel.close();
+            WebSockets.sendClose(code, reason, this.channel, new WebSocketCallback<Void>() {
+                @Override
+                public void complete(WebSocketChannel channel, Void context) {
+                    if (callback != null) {
+                        callback.complete(null);
+                    }
+                }
+
+                @Override
+                public void onError(WebSocketChannel channel, Void context, Throwable throwable) {
+                    if (callback != null) {
+                        callback.complete(throwable);
+                    }
+                }
+            });
         }
     }
 
@@ -206,7 +249,7 @@ public abstract class WebSocketClientImpl implements WebSocketClient {
     }
 
     @Override
-    public void send(String text, SendCallback callback) {
+    public void send(String text, Callback callback) {
         if (this.channel != null && this.channel.isOpen()) {
             WebSockets.sendText(text, this.channel, new WebSocketCallback<Void>() {
                 @Override
@@ -239,5 +282,10 @@ public abstract class WebSocketClientImpl implements WebSocketClient {
     @Override
     public InetSocketAddress getSourceAddress() {
         return this.channel.getSourceAddress();
+    }
+
+    public static void main(String[] args) throws IOException {
+        WebSocketClient client = new SimpleWebSocketClient(URI.create("ws://localhost:9000"));
+        client.connect();
     }
 }

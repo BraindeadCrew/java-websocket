@@ -4,11 +4,7 @@ import fr.braindead.websocket.client.SimpleWebSocketClient;
 import fr.braindead.websocket.client.WebSocketClient;
 import fr.braindead.websocket.server.SimpleWebSocketServer;
 import fr.braindead.websocket.server.WebSocketServer;
-import org.junit.After;
-import org.junit.Before;
-import org.mockito.Mockito;
 
-import java.io.IOException;
 import java.net.URI;
 
 /**
@@ -17,25 +13,14 @@ import java.net.URI;
  */
 public abstract class TestConfig {
 
-    public static final URI DEFAULT_URI = URI.create("ws://localhost:9000");
-    public static final int DEFAULT_PORT = 9000;
+    protected static final int DEFAULT_PORT = 9000;
+    protected static final URI DEFAULT_URI = URI.create("ws://localhost:" + DEFAULT_PORT);
 
-    protected WebSocketClient client;
-    protected WebSocketServer server;
-
-    @Before
-    public void setUpServer() {
-        this.server = Mockito.spy(new SimpleWebSocketServer(DEFAULT_PORT));
+    protected WebSocketClient createClient() {
+        return new SimpleWebSocketClient(DEFAULT_URI);
     }
 
-    @Before
-    public void setUpClient() {
-        this.client = Mockito.spy(new SimpleWebSocketClient(DEFAULT_URI));
-    }
-
-    @After
-    public void tearDown() throws IOException, InterruptedException {
-        this.client.close();
-        this.server.stop();
+    protected WebSocketServer createServer() {
+        return new SimpleWebSocketServer(DEFAULT_PORT);
     }
 }

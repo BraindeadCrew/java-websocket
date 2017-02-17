@@ -12,7 +12,7 @@ public interface WebSocketServer extends WebSocketServerHandlers {
 
     void start();
 
-    void stop();
+    void stop() throws ServerStoppedException;
 
-    Set<WebSocket> getClients();
+    Set<WebSocket> getClients() throws ServerStoppedException;
 }

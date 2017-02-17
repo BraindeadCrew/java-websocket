@@ -20,7 +20,7 @@ import static io.undertow.Handlers.websocket;
  *
  * Created by leiko on 18/06/15.
  */
-public abstract class WebSocketServerImpl implements WebSocketServer {
+public abstract class WebSocketServerImpl implements WebSocketServer, WebSocketConnectionCallback {
 
     private WebSocketProtocolHandshakeHandler wsHandler;
     private Undertow server;
@@ -39,7 +39,7 @@ public abstract class WebSocketServerImpl implements WebSocketServer {
      * @param port port to listen to
      */
     public WebSocketServerImpl(String host, int port) {
-        this.wsHandler = websocket(new ConnectionHandler());
+        this.wsHandler = websocket(this);
         this.server = Undertow.builder()
                 .addHttpListener(port, host)
                 .setHandler(this.wsHandler)
@@ -48,50 +48,58 @@ public abstract class WebSocketServerImpl implements WebSocketServer {
 
     @Override
     public void start() {
-        this.server.start();
+        if (this.server != null) {
+            this.server.start();
+        }
     }
 
     @Override
-    public void stop() {
+    public void stop() throws ServerStoppedException {
+        if (this.server == null) {
+            throw new ServerStoppedException();
+        }
+
         this.wsHandler.getPeerConnections().forEach(chan -> {
-            try {
-                chan.close();
-            } catch (IOException ignore) {}
+            try { chan.sendClose(); } catch (IOException ignore) {}
         });
+
         this.server.stop();
+        this.server = null;
     }
 
     @Override
-    public Set<WebSocket> getClients() {
+    public synchronized Set<WebSocket> getClients() throws ServerStoppedException {
+        if (this.server == null) {
+            throw new ServerStoppedException();
+        }
+
         return this.wsHandler.getPeerConnections()
                 .stream()
                 .map(SimpleWebSocketClient::new)
                 .collect(Collectors.toSet());
     }
 
-    private final class ConnectionHandler implements WebSocketConnectionCallback {
-        @Override
-        public void onConnect(WebSocketHttpExchange exchange, WebSocketChannel channel) {
-            final WebSocket client = new SimpleWebSocketClient(channel);
+    @Override
+    public void onConnect(WebSocketHttpExchange exchange, WebSocketChannel channel) {
+        final WebSocket client = new SimpleWebSocketClient(channel);
 
-            channel.getReceiveSetter().set(new AbstractReceiveListener() {
-                @Override
-                protected void onFullTextMessage(WebSocketChannel channel, BufferedTextMessage message) {
-                    onMessage(client, message.getData());
-                }
+        channel.getReceiveSetter().set(new AbstractReceiveListener() {
+            @Override
+            protected void onFullTextMessage(WebSocketChannel channel, BufferedTextMessage message) {
+                onMessage(client, message.getData());
+            }
 
-                @Override
-                protected void onError(WebSocketChannel channel, Throwable error) {
-                    WebSocketServerImpl.this.onError(client, error);
-                }
-            });
+            @Override
+            protected void onError(WebSocketChannel channel, Throwable error) {
+                WebSocketServerImpl.this.onError(client, error);
+            }
+        });
 
-            channel.addCloseTask(chan ->
-                    onClose(client, chan.getCloseCode(), chan.getCloseReason(), chan.isCloseInitiatedByRemotePeer()));
+        channel.addCloseTask(chan ->
+                onClose(client, chan.getCloseCode(), chan.getCloseReason(), chan.isCloseInitiatedByRemotePeer()));
 
-            channel.resumeReceives();
+        channel.resumeReceives();
 
-            onOpen(client);
-        }
+        onOpen(client);
     }
 }
