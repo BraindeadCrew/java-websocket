@@ -6,6 +6,7 @@ import fr.braindead.websocket.server.SimpleWebSocketServer;
 import fr.braindead.websocket.server.WebSocketServer;
 
 import java.net.URI;
+import java.util.concurrent.CountDownLatch;
 
 /**
  *
@@ -22,5 +23,18 @@ public abstract class TestConfig {
 
     protected WebSocketServer createServer() {
         return new SimpleWebSocketServer(DEFAULT_PORT);
+    }
+
+    protected void receiveMessage(WebSocketClient client, CountDownLatch msgLatch) throws Exception {
+        WebSocketServer server = createServer();
+        server.start();
+
+        client.connectBlocking();
+
+        server.getClients().iterator().next().send("hello world");
+
+        msgLatch.await();
+
+        server.stop();
     }
 }

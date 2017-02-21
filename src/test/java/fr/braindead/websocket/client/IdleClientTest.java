@@ -87,4 +87,15 @@ public class IdleClientTest extends TestConfig {
 
         server.stop();
     }
+
+    @Test(timeout = 3000)
+    public void testShouldReceiveMessage() throws Exception {
+        CountDownLatch msgLatch = new CountDownLatch(1);
+        receiveMessage(new SimpleIdleWebSocketClient(DEFAULT_URI) {
+            @Override
+            public void onMessage(String msg) {
+                msgLatch.countDown();
+            }
+        }, msgLatch);
+    }
 }

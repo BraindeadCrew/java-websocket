@@ -160,4 +160,15 @@ public class ReconnectClientTest extends TestConfig {
         // during the 750ms sleep the reconnect process should have been called twice
         Assert.assertEquals(2, errorCounter.getValue());
     }
+
+    @Test(timeout = 3000)
+    public void testShouldReceiveMessage() throws Exception {
+        CountDownLatch msgLatch = new CountDownLatch(1);
+        receiveMessage(new SimpleReconnectWebSocketClient(DEFAULT_URI) {
+            @Override
+            public void onMessage(String msg) {
+                msgLatch.countDown();
+            }
+        }, msgLatch);
+    }
 }

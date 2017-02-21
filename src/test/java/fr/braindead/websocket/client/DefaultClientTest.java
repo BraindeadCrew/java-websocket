@@ -159,4 +159,14 @@ public class DefaultClientTest extends TestConfig {
         clientOnErrorLatch.await();
     }
 
+    @Test(timeout = 3000)
+    public void testShouldReceiveMessage() throws Exception {
+        CountDownLatch msgLatch = new CountDownLatch(1);
+        receiveMessage(new SimpleWebSocketClient(DEFAULT_URI) {
+            @Override
+            public void onMessage(String msg) {
+                msgLatch.countDown();
+            }
+        }, msgLatch);
+    }
 }
