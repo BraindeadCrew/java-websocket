@@ -19,6 +19,8 @@ public interface WebSocket extends WebSocketClientHandlers {
     void close(int code, String reason) throws IOException;
     void close(int code, String reason, Callback callback) throws IOException;
 
+    void setIdleTimeout(long timeout);
+
     boolean isOpen();
     boolean isClosed();
 

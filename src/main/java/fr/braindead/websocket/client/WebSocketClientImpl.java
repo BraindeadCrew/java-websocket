@@ -30,6 +30,7 @@ public abstract class WebSocketClientImpl implements WebSocketClient {
     public static final long DEFAULT_TIMEOUT = 10;
 
     private XnioWorker worker;
+    private long idleTimeout = -1;
 
     protected URI uri;
     protected WebSocketChannel channel;
@@ -41,6 +42,7 @@ public abstract class WebSocketClientImpl implements WebSocketClient {
      */
     public WebSocketClientImpl(WebSocketChannel channel) {
         this.channel = channel;
+        this.channel.setIdleTimeout(this.idleTimeout);
         this.handlerService = Executors.newCachedThreadPool();
     }
 
@@ -65,14 +67,12 @@ public abstract class WebSocketClientImpl implements WebSocketClient {
             if (ioFuture.getStatus() == IoFuture.Status.DONE) {
                 try {
                     this.channel = ioFuture.get();
-                    logger.debug("channel ok");
+                    this.channel.setIdleTimeout(this.idleTimeout);
                     registerChannelReceivers();
                 } catch (IOException e) {
-                    logger.debug("channel NOK");
                     e.printStackTrace();
                 }
             } else {
-                logger.debug("status not cool {}", ioFuture.getStatus());
                 handlerService.submit(() -> onError(ioFuture.getException()));
             }
         }, this);
@@ -106,6 +106,7 @@ public abstract class WebSocketClientImpl implements WebSocketClient {
             case DONE:
                 // ok
                 this.channel = futureChan.get();
+                this.channel.setIdleTimeout(this.idleTimeout);
                 registerChannelReceivers();
                 return true;
 
@@ -195,14 +196,14 @@ public abstract class WebSocketClientImpl implements WebSocketClient {
                 @Override
                 public void complete(WebSocketChannel channel, Void context) {
                     if (callback != null) {
-                        callback.complete(null);
+                        handlerService.submit(() -> callback.complete(null));
                     }
                 }
 
                 @Override
                 public void onError(WebSocketChannel channel, Void context, Throwable throwable) {
                     if (callback != null) {
-                        callback.complete(throwable);
+                        handlerService.submit(() -> callback.complete(throwable));
                     }
                 }
             });
@@ -212,13 +213,30 @@ public abstract class WebSocketClientImpl implements WebSocketClient {
     protected void internalClose() {
         try {
             this.handlerService.shutdown();
-            this.handlerService.awaitTermination(5000, TimeUnit.MILLISECONDS);
+            boolean succeed = this.handlerService.awaitTermination(5000, TimeUnit.MILLISECONDS);
+            if (!succeed) {
+                logger.debug("Handler service has been shutdown forcefully because of timeout (5000ms)");
+            } else {
+                logger.debug("Handler service has been successfully shutdown");
+            }
         } catch (InterruptedException e) {
             logger.debug("Handler service has been interrupted while waiting for shutdown. Forcing shutdown...");
             this.handlerService.shutdownNow();
         } finally {
             this.worker.shutdownNow();
+            logger.debug("Worker successfully shutdown");
+            if (this.channel != null) {
+                this.channel.getIoThread().getWorker().shutdownNow();
+                logger.debug("Channel IoThread worker successfully shutdown");
+                this.channel.getWorker().shutdownNow();
+                logger.debug("Channel worker successfully shutdown");
+            }
         }
+    }
+
+    @Override
+    public void setIdleTimeout(long timeout) {
+        this.idleTimeout = timeout;
     }
 
     /**
