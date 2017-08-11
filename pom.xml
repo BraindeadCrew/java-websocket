@@ -130,9 +130,9 @@
     </developers>
 
     <scm>
-        <connection>scm:git:git@github.com:BraindeadCrew/java-websocket-client.git</connection>
-        <developerConnection>scm:git:git@github.com:BraindeadCrew/java-websocket-client.git</developerConnection>
-        <url>http://github.com/BraindeadCrew/java-websocket-client.git</url>
+        <connection>scm:git:git@github.com:BraindeadCrew/java-websocket.git</connection>
+        <developerConnection>scm:git:git@github.com:BraindeadCrew/java-websocket.git</developerConnection>
+        <url>http://github.com/BraindeadCrew/java-websocket.git</url>
     </scm>
 
     <distributionManagement>
